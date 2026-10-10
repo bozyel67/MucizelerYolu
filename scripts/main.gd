@@ -851,6 +851,7 @@ var startup_sound_player: AudioStreamPlayer
 
 func _start_intro_sequence():
 	player.is_frozen = true
+	get_tree().create_timer(6.0).timeout.connect(func(): player.is_frozen = false)
 	
 	startup_sound_player = AudioStreamPlayer.new()
 	startup_sound_player.stream = load("res://startup.wav")
@@ -1187,7 +1188,7 @@ func spawn_boss_snake(pos):
 	env_node.add_child(s)
 
 func spawn_boss_fireball(pos):
-	# Fireball logic here
+	pass
 
 func _build_woman():
 	var woman = CSGCylinder3D.new(); woman.name = "Woman"
