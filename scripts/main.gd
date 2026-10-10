@@ -9,11 +9,35 @@ var apples_collected = 0
 var apples_handed = 0
 var has_key = false
 var has_plank = false
-var total_apples = 5
+var total_apples = 4
+
+var snakes_killed = 0
+var total_snakes_stage2 = 5
+var stage2_npc_spawned = false
+
+func snake_killed():
+	snakes_killed += 1
+	if snakes_killed == total_snakes_stage2:
+		queue_dialogue("Tüm yılanları öldürdüm! Dayıya gitmeliyim.", 4.0)
+
+func interact_with_npc2():
+	if snakes_killed < total_snakes_stage2:
+		queue_dialogue("Şatodaki " + str(total_snakes_stage2) + " yılanı öldürmelisin.", 3.0)
+	else:
+		queue_dialogue("Aferin oğul, iyi iş çıkardın, gel yanıma bakalım.", 4.0)
+		queue_dialogue("Seni tanrı yarattı, sen ilk insansın. Şimdi Tanrın ile tanışma zamanı.", 5.0)
+		queue_dialogue("Şu 500 metre ilerideki merdivene tırman.", 4.0)
+		_build_stage_3_ladder()
+
 var dialogue_timer = 0.0
 var active_dialogue_queue = []
+var is_paused = false
+var pause_menu: Control
+var damage_overlay: ColorRect
+var hp_label: Label
 
 func _ready():
+	_setup_ui()
 	_build_stage_2()
 	_setup_inputs()
 	_build_world()
@@ -21,11 +45,13 @@ func _ready():
 	ui_apples.text = "Elma: 0 / 5"
 	ui_dialogue.text = ""
 	
-	queue_dialogue("Ne? Ne oluyor?", 3.0)
-	queue_dialogue("Neredeyim ben?", 3.0)
-	queue_dialogue("Ben kimim?", 3.0)
+	_start_intro_sequence()
 
 func _process(delta):
+	_process_tawaf()
+	_animate_planets(delta)
+	if player:
+		hp_label.text = "HP: " + str(player.hp)
 	if active_dialogue_queue.size() > 0:
 		dialogue_timer -= delta
 		if dialogue_timer <= 0:
@@ -51,7 +77,8 @@ func collect_apple():
 	apples_collected += 1
 	ui_apples.text = "Elma: " + str(apples_collected) + " / " + str(total_apples)
 	if apples_collected == total_apples:
-		queue_dialogue("Harika, 5 elmayı da topladım. Dayıya geri döneyim.")
+		queue_dialogue("Harika, 4 elmayı da topladım. Dayıya geri döneyim.")
+		ui_apples.visible = false
 
 func interact_with_npc():
 	if apples_collected < total_apples:
@@ -81,6 +108,7 @@ func interact_with_door():
 			var tw = create_tween()
 			tw.tween_property(door_wall, "position:y", door_wall.position.y + 10, 3.0)
 		queue_dialogue("BÖLÜM 2'ye (Hz. Nuh) YÜKLENİYOR...", 5.0)
+		get_node("/root/Main/Player").checkpoint_pos = Vector3(0, 12.5, -55)
 		# Transition to Stage 2 handled by player walking through corridor
 	else:
 		queue_dialogue("Kapı kilitli. İhtiyar dayıyla konuşmalıyım.", 3.0)
@@ -112,6 +140,11 @@ func place_plank(node: Node):
 		queue_dialogue("Buradaki boşluk çok büyük. Karşıya geçmek için uzun bir tahta lazım.", 3.0)
 
 func _build_world():
+	var env = get_node_or_null("WorldEnvironment")
+	if env:
+		var sky_mat = PanoramaSkyMaterial.new()
+		sky_mat.panorama = load("res://sky_blue_cloudy.jpg")
+		env.environment.sky.sky_material = sky_mat
 	# Seramik Zemin Materyali (Yansımalı ve Dokulu)
 	var ceramic_mat = StandardMaterial3D.new()
 	var ceramic_tex = load("res://ceramic_diffuse.png")
@@ -239,7 +272,12 @@ func _build_world():
 			apple_node.add_child(fallback_apple)
 			
 		var a_body = StaticBody3D.new()
-		a_body.add_to_group("apple")
+		if i == 4:
+			a_body.add_to_group("black_apple")
+			a_mat.albedo_color = Color(0.1, 0.1, 0.1)
+		else:
+			a_body.add_to_group("apple")
+			a_mat.albedo_color = Color(0.85, 0.1, 0.1)
 		apple_node.add_child(a_body)
 		var a_col = CollisionShape3D.new()
 		var a_shape = SphereShape3D.new()
@@ -415,7 +453,7 @@ func _build_clouds():
 	var cloud_mat = FogMaterial.new()
 	cloud_mat.density = 2.0
 	cloud_mat.albedo = Color(1, 1, 1)
-	cloud_mat.emission = Color(0.5, 0.5, 0.5)
+	cloud_mat.emission = Color(1, 1, 1)
 	
 	var cloud_positions = [
 		Vector3(-20, -5, -10), Vector3(20, -5, -20),
@@ -432,6 +470,8 @@ func _build_clouds():
 		fog.material = cloud_mat
 		env_node.add_child(fog)
 
+var planet_sprites = []
+var planet_time = 0.0
 func _build_planets():
 	# 5 Farklı gezegen texture'ını yükle
 	var planet_textures = []
@@ -468,8 +508,25 @@ func _build_planets():
 		planet_sprite.alpha_scissor_threshold = 0.0
 		
 		env_node.add_child(planet_sprite)
+		planet_sprites.append(planet_sprite)
 
 func _setup_inputs():
+	if not InputMap.has_action("crouch"):
+		InputMap.add_action("crouch")
+		var ev_ctrl = InputEventKey.new(); ev_ctrl.physical_keycode = KEY_CTRL; InputMap.action_add_event("crouch", ev_ctrl)
+	if not InputMap.has_action("ultimate"):
+		InputMap.add_action("ultimate")
+		var ev_r = InputEventKey.new(); ev_r.physical_keycode = KEY_R; InputMap.action_add_event("ultimate", ev_r)
+	if not InputMap.has_action("ice_miracle"):
+		InputMap.add_action("ice_miracle")
+		var ev_f = InputEventKey.new(); ev_f.physical_keycode = KEY_F; InputMap.action_add_event("ice_miracle", ev_f)
+	if not InputMap.has_action("weapon_next"):
+		InputMap.add_action("weapon_next")
+		var ev_mb_u = InputEventMouseButton.new(); ev_mb_u.button_index = MOUSE_BUTTON_WHEEL_UP; InputMap.action_add_event("weapon_next", ev_mb_u)
+	if not InputMap.has_action("weapon_prev"):
+		InputMap.add_action("weapon_prev")
+		var ev_mb_d = InputEventMouseButton.new(); ev_mb_d.button_index = MOUSE_BUTTON_WHEEL_DOWN; InputMap.action_add_event("weapon_prev", ev_mb_d)
+
 	for action in ["move_forward", "move_backward", "move_left", "move_right", "jump", "interact", "punch"]:
 		if not InputMap.has_action(action):
 			InputMap.add_action(action)
@@ -567,24 +624,26 @@ func _build_stage_2():
 	env_node.add_child(r_wall_front)
 	
 	# Snake
-	var snake = CSGCylinder3D.new()
+	var snake = CharacterBody3D.new()
 	snake.name = "Snake"
-	snake.radius = 1.0
-	snake.height = 3.0
 	snake.position = Vector3(95, 13.5, -255)
+	snake.set_script(load("res://scripts/snake.gd"))
+	
+	var snake_mesh = CSGCylinder3D.new()
+	snake_mesh.radius = 1.0
+	snake_mesh.height = 3.0
 	var snake_mat = StandardMaterial3D.new()
 	snake_mat.albedo_color = Color(0, 0.8, 0)
-	snake.material = snake_mat
+	snake_mesh.material = snake_mat
+	snake.add_child(snake_mesh)
 	
-	var snake_body = StaticBody3D.new()
-	snake_body.add_to_group("snake")
 	var snake_col = CollisionShape3D.new()
 	var snake_shape = CylinderShape3D.new()
 	snake_shape.radius = 1.0
 	snake_shape.height = 3.0
 	snake_col.shape = snake_shape
-	snake_body.add_child(snake_col)
-	snake.add_child(snake_body)
+	snake.add_child(snake_col)
+	
 	env_node.add_child(snake)
 	
 	# Stage 2 Door
@@ -631,6 +690,45 @@ func _build_stage_2():
 			tower.material = marble_mat
 			env_node.add_child(tower)
 			
+	
+	for i in range(total_snakes_stage2):
+		var s = CharacterBody3D.new()
+		s.position = Vector3(180 + randf_range(-5, 5), 14, -255 + randf_range(-5, 5))
+		s.set_script(load("res://scripts/snake.gd"))
+		var sm = CSGCylinder3D.new()
+		sm.radius = 1.0; sm.height = 3.0
+		var s_mat = StandardMaterial3D.new()
+		s_mat.albedo_color = Color(0, 0.8, 0)
+		sm.material = s_mat
+		s.add_child(sm)
+		var sc = CollisionShape3D.new()
+		var ss = CylinderShape3D.new()
+		ss.radius = 1.0; ss.height = 3.0
+		sc.shape = ss
+		s.add_child(sc)
+		env_node.add_child(s)
+
+	# Add Old Man at Castle
+	var npc2 = CSGCylinder3D.new()
+	npc2.name = "NPC2"
+	npc2.radius = 0.5
+	npc2.height = 1.9
+	npc2.position = Vector3(170, 13.5, -255)
+	npc2.use_collision = true
+	var npc2_body = StaticBody3D.new()
+	npc2_body.add_to_group("npc2")
+	npc2.add_child(npc2_body)
+	var npc2_col = CollisionShape3D.new()
+	var npc2_shape = CylinderShape3D.new()
+	npc2_shape.radius = 0.6; npc2_shape.height = 2.0
+	npc2_col.shape = npc2_shape
+	npc2_body.add_child(npc2_col)
+	var npc2_mat = StandardMaterial3D.new()
+	npc2_mat.albedo_color = Color(1, 1, 1); npc2_mat.emission_enabled = true
+	npc2_mat.emission = Color(1, 1, 1); npc2_mat.emission_energy_multiplier = 0.3
+	npc2.material = npc2_mat
+	env_node.add_child(npc2)
+
 	# Open world greenery
 	for pos in [Vector3(130, 12.5, -230), Vector3(140, 12.5, -280), Vector3(160, 12.5, -220)]:
 		var bush = CSGSphere3D.new()
@@ -673,3 +771,959 @@ func interact_with_door2(door_node):
 			env_node.add_child(cloud)
 	else:
 		queue_dialogue("Önce yılanı öldürmelisin!", 3.0)
+
+func _setup_ui():
+	var canvas = $CanvasLayer
+	
+	damage_overlay = ColorRect.new()
+	damage_overlay.color = Color(1, 0, 0, 0)
+	damage_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	damage_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	canvas.add_child(damage_overlay)
+	
+	hp_label = Label.new()
+	hp_label.position = Vector2(20, 80)
+	hp_label.add_theme_font_size_override("font_size", 24)
+	hp_label.add_theme_color_override("font_color", Color(1, 0.2, 0.2))
+	canvas.add_child(hp_label)
+	
+	pause_menu = Control.new()
+	pause_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_menu.visible = false
+	
+	var bg = ColorRect.new()
+	bg.color = Color(0, 0, 0, 0.7)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_menu.add_child(bg)
+	
+	var vbox = VBoxContainer.new()
+	vbox.set_anchors_preset(Control.PRESET_CENTER)
+	vbox.position -= Vector2(100, 100) # center offset roughly
+	pause_menu.add_child(vbox)
+	
+	var title = Label.new()
+	title.text = "DURAKLATILDI"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 32)
+	vbox.add_child(title)
+	
+	var btn_resume = Button.new()
+	btn_resume.text = "Devam Et"
+	btn_resume.pressed.connect(toggle_pause)
+	vbox.add_child(btn_resume)
+	
+	var btn_restart = Button.new()
+	btn_restart.text = "Yeniden Başlat"
+	btn_restart.pressed.connect(func():
+		toggle_pause()
+		if player: player.die()
+	)
+	vbox.add_child(btn_restart)
+	
+	var btn_quit = Button.new()
+	btn_quit.text = "Oyundan Çık"
+	btn_quit.pressed.connect(func():
+		get_tree().paused = false; get_tree().change_scene_to_file("res://scenes/main_menu.tscn") # or change scene to main menu
+	)
+	vbox.add_child(btn_quit)
+	
+	canvas.add_child(pause_menu)
+
+func toggle_pause():
+	is_paused = !is_paused
+	get_tree().paused = is_paused
+	pause_menu.visible = is_paused
+	if is_paused:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	else:
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+func flash_damage():
+	var tw = create_tween()
+	damage_overlay.color = Color(1, 0, 0, 0.5)
+	tw.tween_property(damage_overlay, "color", Color(1, 0, 0, 0), 0.5)
+
+# --- PHASE 2 ADDITIONS ---
+var intro_texts = ["Ne?", "Ne oluyor?", "Burası neresi?", "Ben kimim?"]
+var intro_text_index = 0
+var intro_label: Label
+var startup_sound_player: AudioStreamPlayer
+
+func _start_intro_sequence():
+	player.is_frozen = true
+	
+	startup_sound_player = AudioStreamPlayer.new()
+	startup_sound_player.stream = load("res://startup.wav")
+	add_child(startup_sound_player)
+	
+	intro_label = Label.new()
+	intro_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	intro_label.add_theme_font_size_override("font_size", 80)
+	intro_label.add_theme_color_override("font_color", Color(0.8, 0.1, 0.1))
+	intro_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	intro_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	intro_label.visible = false
+	$CanvasLayer.add_child(intro_label)
+	
+	startup_sound_player.play()
+	var tw = create_tween()
+	tw.tween_interval(2.0)
+	tw.tween_callback(_play_next_intro_text)
+
+func _play_next_intro_text():
+	if intro_text_index >= intro_texts.size():
+		player.is_frozen = false
+		return
+		
+	intro_label.text = intro_texts[intro_text_index]
+	intro_label.visible = true
+	
+	# Random position offset
+	intro_label.position = Vector2(randf_range(-100, 100), randf_range(-50, 50))
+	intro_label.scale = Vector2(0.1, 0.1)
+	
+	var tw = create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(intro_label, "scale", Vector2(1.5, 1.5), 0.5)
+	tw.tween_property(intro_label, "modulate:a", 1.0, 0.2)
+	tw.set_parallel(false)
+	tw.tween_property(intro_label, "modulate:a", 0.0, 0.3)
+	tw.tween_callback(func():
+		intro_label.visible = false
+		intro_text_index += 1
+		_play_next_intro_text()
+	)
+
+func _animate_planets(delta):
+	planet_time += delta * 0.5
+	for i in range(planet_sprites.size()):
+		var sp = planet_sprites[i]
+		# slow floaty movement
+		var offset_x = sin(planet_time + i) * 2.0
+		var offset_y = cos(planet_time * 0.8 + i) * 1.5
+		sp.position.x += offset_x * delta
+		sp.position.y += offset_y * delta
+
+
+func _build_stage_3_ladder():
+	var marble_mat = StandardMaterial3D.new()
+	var marble_tex = load("res://marble_diffuse.png")
+	if marble_tex: marble_mat.albedo_texture = marble_tex
+	
+	# The ladder is 500m ahead (X = 180, Z = -755) and goes 500m high.
+	for i in range(250):
+		var step = CSGBox3D.new()
+		step.size = Vector3(10, 1, 3)
+		step.position = Vector3(180, 15 + (i * 2.0), -265 - (i * 2.0))
+		step.use_collision = true
+		step.material = marble_mat
+		env_node.add_child(step)
+		
+	# Door at the top
+	var top_plat = CSGBox3D.new()
+	top_plat.size = Vector3(20, 1, 20)
+	top_plat.position = Vector3(180, 515, -775)
+	top_plat.use_collision = true
+	top_plat.material = marble_mat
+	env_node.add_child(top_plat)
+	
+	var door3 = CSGBox3D.new()
+	door3.name = "Door3"
+	door3.size = Vector3(6, 10, 1)
+	door3.position = Vector3(180, 520, -780)
+	var door_mat = StandardMaterial3D.new()
+	door_mat.albedo_color = Color(0.8, 0.8, 0.2)
+	door3.material = door_mat
+	
+	var d3_body = StaticBody3D.new()
+	d3_body.add_to_group("door3")
+	var d3_col = CollisionShape3D.new()
+	var d3_shape = BoxShape3D.new()
+	d3_shape.size = door3.size
+	d3_col.shape = d3_shape
+	d3_body.add_child(d3_col)
+	door3.add_child(d3_body)
+	env_node.add_child(door3)
+
+func interact_with_door3():
+	queue_dialogue("3. Bölüme geçiliyor (Tanrı ve Şeytan)...", 4.0)
+	player.checkpoint_pos = Vector3(180, 516, -775)
+	_build_stage_3()
+	var tw = create_tween()
+	var door3 = env_node.get_node_or_null("Door3")
+	if door3:
+		tw.tween_property(door3, "position:y", door3.position.y + 10, 3.0)
+
+func _build_stage_3():
+	# Pink dust clouds area
+	var ceramic_mat = StandardMaterial3D.new()
+	var ceramic_tex = load("res://ceramic_diffuse.png")
+	if ceramic_tex: ceramic_mat.albedo_texture = ceramic_tex
+	
+	var ground = CSGBox3D.new()
+	ground.size = Vector3(100, 1, 100)
+	ground.position = Vector3(180, 515, -830)
+	ground.use_collision = true
+	ground.material = ceramic_mat
+	env_node.add_child(ground)
+	
+	# Pink Fog
+	var cloud_mat = FogMaterial.new()
+	cloud_mat.density = 3.0
+	cloud_mat.albedo = Color(1, 0.6, 0.8)
+	cloud_mat.emission = Color(0.8, 0.3, 0.5)
+	for i in range(8):
+		var fog = FogVolume.new()
+		fog.position = Vector3(180 + randf_range(-30, 30), 520 + randf_range(0, 20), -830 + randf_range(-30, 30))
+		fog.size = Vector3(40, 20, 40)
+		fog.shape = 1
+		fog.material = cloud_mat
+		env_node.add_child(fog)
+		
+	# Sparkles/Particles (Using simple small meshes)
+	for i in range(50):
+		var sp = CSGSphere3D.new()
+		sp.radius = 0.2
+		sp.position = Vector3(180 + randf_range(-40, 40), 516 + randf_range(0, 10), -830 + randf_range(-40, 40))
+		var smat = StandardMaterial3D.new()
+		smat.albedo_color = Color(1, 1, 0.5)
+		smat.emission_enabled = true
+		smat.emission = Color(1, 1, 0)
+		smat.emission_energy_multiplier = 5.0
+		sp.material = smat
+		env_node.add_child(sp)
+
+	# Trigger Cutscene
+	queue_dialogue("Şeytan: İnsan mı? Ama o sadece çamur. Beni ateşten yarattın ben daha üstünüm.", 6.0)
+	queue_dialogue("Tanrı: Bana karşı mı geliyorsun?", 4.0)
+	queue_dialogue("Şeytan: Hey İnsan, gel senle kapışalım senin gücünü test edeyim.", 5.0)
+	queue_dialogue("İhtiyar Dayı: Henüz hazır değilsin. 2. Şatodan mucize gücünü almalısın.", 5.0)
+	_build_stage_4_door()
+
+
+func _build_stage_4_door():
+	var door4 = CSGBox3D.new()
+	door4.name = "Door4"
+	door4.size = Vector3(10, 15, 1)
+	door4.position = Vector3(250, 522.5, -830)
+	var door_mat = StandardMaterial3D.new()
+	door_mat.albedo_color = Color(0, 0, 0) # Black/Space
+	door4.material = door_mat
+	
+	var d4_body = StaticBody3D.new()
+	d4_body.add_to_group("door4")
+	var d4_col = CollisionShape3D.new()
+	var d4_shape = BoxShape3D.new()
+	d4_shape.size = door4.size
+	d4_col.shape = d4_shape
+	d4_body.add_child(d4_col)
+	door4.add_child(d4_body)
+	env_node.add_child(door4)
+
+func interact_with_door4():
+	queue_dialogue("4. Bölüme geçiliyor (Modern Şato)...", 4.0)
+	player.checkpoint_pos = Vector3(250, 516, -840)
+	_build_stage_4()
+	var door4 = env_node.get_node_or_null("Door4")
+	if door4: door4.queue_free()
+
+func _build_stage_4():
+	var marble_mat = StandardMaterial3D.new()
+	var marble_tex = load("res://marble_diffuse.png")
+	if marble_tex: marble_mat.albedo_texture = marble_tex
+	
+	# Castle (300sqm -> ~17x17), 3 floors
+	var castle = CSGCombiner3D.new()
+	castle.position = Vector3(250, 515, -880)
+	castle.use_collision = true
+	
+	for i in range(3):
+		var floor_y = i * 6.0
+		var level = CSGBox3D.new()
+		level.size = Vector3(17, 6, 17)
+		level.position.y = floor_y + 3.0
+		# Hollow inside
+		var hole = CSGBox3D.new()
+		hole.size = Vector3(16, 5, 16)
+		hole.position.y = floor_y + 3.0
+		hole.operation = CSGShape3D.OPERATION_SUBTRACTION
+		castle.add_child(level)
+		castle.add_child(hole)
+		
+		# Stairs to next floor
+		if i < 2:
+			var stairs = CSGBox3D.new()
+			stairs.size = Vector3(3, 6, 8)
+			stairs.position = Vector3(6, floor_y + 3.0, 4)
+			stairs.rotation.x = deg_to_rad(45)
+			castle.add_child(stairs)
+			
+	env_node.add_child(castle)
+	
+	# Chest at 3rd floor
+	var chest = CSGBox3D.new()
+	chest.size = Vector3(2, 1.5, 1.5)
+	chest.position = Vector3(250, 515 + 12.0 + 0.75, -880)
+	var wood_mat = StandardMaterial3D.new()
+	wood_mat.albedo_color = Color(0.3, 0.15, 0.05)
+	chest.material = wood_mat
+	
+	var chest_body = StaticBody3D.new()
+	chest_body.add_to_group("chest_miracle")
+	var chest_col = CollisionShape3D.new()
+	var chest_shape = BoxShape3D.new()
+	chest_shape.size = chest.size
+	chest_col.shape = chest_shape
+	chest_body.add_child(chest_col)
+	chest.add_child(chest_body)
+	env_node.add_child(chest)
+	
+	# Spawn apples inside castle
+	var apple_mesh_resource = load("res://apple.obj")
+	var a_mat = StandardMaterial3D.new()
+	a_mat.albedo_color = Color(0.85, 0.1, 0.1)
+	
+	for i in range(10):
+		var pos = Vector3(250 + randf_range(-7, 7), 515 + (randi() % 3) * 6.0 + 1.0, -880 + randf_range(-7, 7))
+		var a = Node3D.new()
+		a.position = pos
+		var fallback = CSGSphere3D.new()
+		fallback.radius = 0.3
+		fallback.material = a_mat
+		a.add_child(fallback)
+		var b = StaticBody3D.new()
+		b.add_to_group("apple")
+		var c = CollisionShape3D.new()
+		c.shape = SphereShape3D.new()
+		c.shape.radius = 0.6
+		b.add_child(c)
+		a.add_child(b)
+		env_node.add_child(a)
+
+func interact_with_chest_miracle(chest_node):
+	chest_node.queue_free()
+	queue_dialogue("Mucize Gücünü aldın! (Ateş Topu - R tuşu)", 4.0)
+	player.has_miracle = true
+	
+	# Flash screen
+	var flash = ColorRect.new()
+	flash.color = Color(1, 1, 1, 1)
+	flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	$CanvasLayer.add_child(flash)
+	var tw = create_tween()
+	tw.tween_property(flash, "color", Color(1, 1, 1, 0), 2.0)
+	tw.tween_callback(flash.queue_free)
+	
+	queue_dialogue("Şeytan: Hey insan sana meydan okuyorum. Gel dövüşelim!", 4.0)
+	queue_dialogue("Şeytanın alemine gitmek için kapıya (E) tıkla.", 4.0)
+	_build_boss_portal()
+
+func _build_boss_portal():
+	var p = CSGBox3D.new()
+	p.size = Vector3(5, 5, 1)
+	p.position = Vector3(250, 515 + 1.0 + 2.5, -870) # outside castle
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(1, 0, 0)
+	p.material = mat
+	var body = StaticBody3D.new()
+	body.add_to_group("boss_portal")
+	p.add_child(body)
+	var col = CollisionShape3D.new()
+	var s = BoxShape3D.new()
+	s.size = p.size
+	col.shape = s
+	body.add_child(col)
+	env_node.add_child(p)
+
+func interact_with_boss_portal():
+	queue_dialogue("Boss Arena Yükleniyor...", 3.0)
+	player.checkpoint_pos = Vector3(250, 1000, -880)
+	player.global_position = player.checkpoint_pos
+	_build_boss_arena()
+
+func _build_boss_arena():
+	var g = CSGBox3D.new()
+	g.size = Vector3(500, 1, 500)
+	g.position = Vector3(250, 999, -880)
+	g.use_collision = true
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.2, 0.2, 0.2)
+	g.material = mat
+	env_node.add_child(g)
+	
+	# Boss
+	var boss = CharacterBody3D.new()
+	boss.set_script(load("res://scripts/boss.gd"))
+	boss.position = Vector3(250, 1000, -1180) # 300m away
+	var bmesh = CSGBox3D.new()
+	bmesh.size = Vector3(50, 50, 50)
+	var bmat = StandardMaterial3D.new()
+	bmat.albedo_color = Color(1, 0, 0)
+	bmesh.material = bmat
+	boss.add_child(bmesh)
+	var bc = CollisionShape3D.new()
+	var bs = BoxShape3D.new()
+	bs.size = Vector3(50, 50, 50)
+	bc.shape = bs
+	boss.add_child(bc)
+	env_node.add_child(boss)
+	boss.activate()
+
+func spawn_boss_snake(pos):
+	var s = CharacterBody3D.new()
+	s.set_script(load("res://scripts/snake.gd"))
+	s.position = pos
+	var sm = CSGCylinder3D.new()
+	sm.radius = 1.0; sm.height = 3.0
+	var smat = StandardMaterial3D.new()
+	smat.albedo_color = Color(0, 0.8, 0)
+	sm.material = smat
+	s.add_child(sm)
+	var sc = CollisionShape3D.new()
+	var ss = CylinderShape3D.new()
+	ss.radius = 1.0; ss.height = 3.0
+	sc.shape = ss
+	s.add_child(sc)
+	env_node.add_child(s)
+
+func spawn_boss_fireball(pos):
+	# Fireball logic here
+
+func _build_woman():
+	var woman = CSGCylinder3D.new(); woman.name = "Woman"
+	woman.radius = 0.4
+	woman.height = 1.7
+	woman.position = Vector3(250, 1000, -900)
+	woman.use_collision = true
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(1, 0.8, 0.8)
+	woman.material = mat
+	
+	var b = StaticBody3D.new()
+	b.add_to_group("woman")
+	var c = CollisionShape3D.new()
+	c.shape = CylinderShape3D.new()
+	c.shape.radius = 0.5
+	c.shape.height = 1.8
+	b.add_child(c)
+	woman.add_child(b)
+	env_node.add_child(woman)
+
+var woman_state = 0 # 0: Needs apple, 1: Needs black apple, 2: Needs wood
+
+func interact_with_woman():
+	if woman_state == 0:
+		if apples_collected > 0:
+			apples_collected -= 1
+			ui_apples.text = "Elma: " + str(apples_collected)
+			queue_dialogue("Kadın: Aa çok güzelmiş, sonsuza kadar burada kalalım.", 4.0)
+			queue_dialogue("Şeytan: İnsan sandığımdan daha eşref-i mahlukmuş...", 4.0)
+			queue_dialogue("Şeytan(Yılan): Sonsuza kadar kalmak için sonsuzluk elmasını(siyah elma) ye.", 5.0)
+			queue_dialogue("Kadın: Hadi bana o elmayı getir lütfen.", 3.0)
+			woman_state = 1
+			player.checkpoint_pos = Vector3(250, 1000, -900)
+		else:
+			queue_dialogue("Kadın: Buralar güzelmiş. Ama çok acıktım bana 1 elma bulabilir misin?", 5.0)
+	elif woman_state == 1:
+		if has_black_apple:
+			queue_dialogue("Kadın: Teşekkürler!", 2.0)
+			queue_dialogue("Tanrı: YASAK ELMAYI YEDİNİZ! SÜRGÜN EDİLİYORSUNUZ!", 5.0)
+			_build_earth()
+		else:
+			queue_dialogue("Kadın: Hala siyah elmayı bekliyorum...", 3.0)
+	elif woman_state == 2:
+		if player.wood_count >= 3:
+			player.wood_count -= 3
+			player.wall_count += 1
+			queue_dialogue("Kadın: 3 odundan 1 Kabe Duvarı ürettim! (Kalan duvarı sol tık ile yerleştir)", 4.0)
+		else:
+			queue_dialogue("Kadın: Lütfen kılıcınla ağaç kesip bana odun getir. (En az 3 odun lazım)", 4.0)
+			queue_dialogue("Burada boş bir alan var, Kabe'yi etrafıma 3x3 olacak şekilde kur.", 4.0)
+	elif woman_state == 4:
+		if player.deer_meat >= 3:
+			queue_dialogue("Kadın: Harika! 3 geyik getirdin.", 3.0)
+			queue_dialogue("Kadın: Yeni nesiller üretmek için Kabe'nin etrafında saat yönünün tersine 7 kez dönmelisin.", 5.0)
+			woman_state = 5
+			tawaf_count = 0
+			last_tawaf_angle = atan2(player.global_position.z - kabe_center.z, player.global_position.x - kabe_center.x)
+		else:
+			queue_dialogue("Kadın: 3 geyik avlamanı bekliyorum.", 3.0)
+	elif woman_state == 6:
+		var dist_to_kabe = player.global_position.distance_to(kabe_center)
+		if dist_to_kabe < 3.0:
+			queue_dialogue("Çocuklar doğdu!", 3.0)
+			woman_state = 7
+			_spawn_children()
+		else:
+			queue_dialogue("Kabe'nin içine gir!", 2.0)
+	elif woman_state == 7:
+		if children_sacrificed >= 1:
+			queue_dialogue("Kadın: Kalan 4 çocuk için 2 yeni ev (duvar) inşa etmeliyiz.", 4.0)
+			queue_dialogue("Yine odun topla ve bana getir.", 3.0)
+			total_houses_needed = 2
+			walls_placed = 0
+			woman_state = 8
+		else:
+			queue_dialogue("Kadın: Tanrıya bir çocuğu kurban etmelisin.", 3.0)
+	elif woman_state == 8:
+		if player.wood_count >= 3:
+			player.wood_count -= 3
+			player.wall_count += 1
+			queue_dialogue("Kadın: 1 Duvar ürettim! Evleri inşa et.", 3.0)
+		else:
+			queue_dialogue("Kadın: Evler için odun lazım.", 3.0)
+
+func _spawn_children():
+	for i in range(5):
+		var c = CharacterBody3D.new()
+		c.set_script(load("res://scripts/child.gd"))
+		c.position = kabe_center + Vector3(randf_range(-1,1), 0.5, randf_range(-1,1))
+		var cm = CSGSphere3D.new(); cm.radius = 0.4
+		var mat = StandardMaterial3D.new(); mat.albedo_color = Color(1, 0.8, 0.8)
+		cm.material = mat; c.add_child(cm)
+		var cc = CollisionShape3D.new(); cc.shape = SphereShape3D.new(); cc.shape.radius = 0.4
+		c.add_child(cc)
+		var body = StaticBody3D.new(); body.add_to_group("child")
+		var bcol = CollisionShape3D.new(); bcol.shape = SphereShape3D.new(); bcol.shape.radius = 0.5
+		body.add_child(bcol); c.add_child(body)
+		env_node.add_child(c)
+
+func child_sacrificed():
+	children_sacrificed += 1
+	queue_dialogue("Çocuğu Tanrı'ya kurban ettin!", 3.0)
+
+func child_placed():
+	children_placed += 1
+
+func _end_game():
+	var end_bg = ColorRect.new()
+	end_bg.color = Color(1, 1, 1, 0)
+	end_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	$CanvasLayer.add_child(end_bg)
+	
+	var label1 = Label.new(); label1.text = "TANRI MEMNUN OLDU"
+	label1.set_anchors_preset(Control.PRESET_CENTER)
+	label1.position.y -= 50
+	label1.add_theme_font_size_override("font_size", 64)
+	label1.add_theme_color_override("font_color", Color(0,0,0,1))
+	label1.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	end_bg.add_child(label1)
+	
+	var label2 = Label.new(); label2.text = "ÇAĞ ATLADIN"
+	label2.set_anchors_preset(Control.PRESET_CENTER)
+	label2.position.y += 50
+	label2.add_theme_font_size_override("font_size", 64)
+	label2.add_theme_color_override("font_color", Color(0,0,0,1))
+	label2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	end_bg.add_child(label2)
+	
+	var tw = create_tween()
+	tw.tween_property(end_bg, "color", Color(1, 1, 1, 1), 3.0)
+	tw.tween_callback(func(): get_tree().paused = true)
+
+func _build_earth():
+	player.checkpoint_pos = Vector3(500, 0, -2000)
+	player.global_position = player.checkpoint_pos
+	woman_state = 2
+	
+	# Earth environment
+	var g = CSGBox3D.new()
+	g.size = Vector3(200, 1, 200)
+	g.position = Vector3(500, -0.5, -2000)
+	g.use_collision = true
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.2, 0.4, 0.1) # Grass
+	g.material = mat
+	env_node.add_child(g)
+	
+	# Trees
+	var t_mat = StandardMaterial3D.new()
+	t_mat.albedo_color = Color(0.4, 0.2, 0) # Trunk
+	var l_mat = StandardMaterial3D.new()
+	l_mat.albedo_color = Color(0, 0.5, 0) # Leaves
+	
+	for i in range(20):
+		var tree = StaticBody3D.new()
+		tree.add_to_group("tree")
+		tree.position = Vector3(500 + randf_range(-80, 80), 0, -2000 + randf_range(-80, 80))
+		
+		var trunk = CSGCylinder3D.new()
+		trunk.radius = 0.5; trunk.height = 5.0; trunk.position.y = 2.5
+		trunk.material = t_mat; tree.add_child(trunk)
+		var leaves = CSGSphere3D.new()
+		leaves.radius = 2.5; leaves.position.y = 6.0
+		leaves.material = l_mat; tree.add_child(leaves)
+		var col = CollisionShape3D.new()
+		var cs = CylinderShape3D.new(); cs.radius = 0.5; cs.height = 5.0
+		col.shape = cs; col.position.y = 2.5; tree.add_child(col)
+		
+		# Add apple at top
+		var a = Node3D.new()
+		a.position.y = 8.5
+		var fb = CSGSphere3D.new(); fb.radius = 0.3
+		var am = StandardMaterial3D.new(); am.albedo_color = Color(0.85, 0.1, 0.1)
+		fb.material = am; a.add_child(fb)
+		var b = StaticBody3D.new(); b.add_to_group("apple")
+		var c = CollisionShape3D.new(); c.shape = SphereShape3D.new(); c.shape.radius = 0.6
+		b.add_child(c); a.add_child(b); tree.add_child(a)
+		
+		env_node.add_child(tree)
+		
+	# Move woman to Earth
+	var woman = env_node.get_node_or_null("Woman")
+	if woman:
+		woman.position = Vector3(505, 0, -2005)
+
+
+func boss_defeated():
+	queue_dialogue("Boss öldü! Tanrı ortaya çıkıyor...", 4.0)
+	queue_dialogue("Tanrı: Aferin insan, ödül olarak kadını hak ettin.", 4.0)
+	_build_woman()
+
+func _build_woman():
+
+func _build_woman():
+	var woman = CSGCylinder3D.new(); woman.name = "Woman"
+	woman.radius = 0.4
+	woman.height = 1.7
+	woman.position = Vector3(250, 1000, -900)
+	woman.use_collision = true
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(1, 0.8, 0.8)
+	woman.material = mat
+	
+	var b = StaticBody3D.new()
+	b.add_to_group("woman")
+	var c = CollisionShape3D.new()
+	c.shape = CylinderShape3D.new()
+	c.shape.radius = 0.5
+	c.shape.height = 1.8
+	b.add_child(c)
+	woman.add_child(b)
+	env_node.add_child(woman)
+
+var woman_state = 0 # 0: Needs apple, 1: Needs black apple, 2: Needs wood
+
+func interact_with_woman():
+	if woman_state == 0:
+		if apples_collected > 0:
+			apples_collected -= 1
+			ui_apples.text = "Elma: " + str(apples_collected)
+			queue_dialogue("Kadın: Aa çok güzelmiş, sonsuza kadar burada kalalım.", 4.0)
+			queue_dialogue("Şeytan: İnsan sandığımdan daha eşref-i mahlukmuş...", 4.0)
+			queue_dialogue("Şeytan(Yılan): Sonsuza kadar kalmak için sonsuzluk elmasını(siyah elma) ye.", 5.0)
+			queue_dialogue("Kadın: Hadi bana o elmayı getir lütfen.", 3.0)
+			woman_state = 1
+			player.checkpoint_pos = Vector3(250, 1000, -900)
+		else:
+			queue_dialogue("Kadın: Buralar güzelmiş. Ama çok acıktım bana 1 elma bulabilir misin?", 5.0)
+	elif woman_state == 1:
+		if has_black_apple:
+			queue_dialogue("Kadın: Teşekkürler!", 2.0)
+			queue_dialogue("Tanrı: YASAK ELMAYI YEDİNİZ! SÜRGÜN EDİLİYORSUNUZ!", 5.0)
+			_build_earth()
+		else:
+			queue_dialogue("Kadın: Hala siyah elmayı bekliyorum...", 3.0)
+	elif woman_state == 2:
+		if player.wood_count >= 3:
+			player.wood_count -= 3
+			player.wall_count += 1
+			queue_dialogue("Kadın: 3 odundan 1 Kabe Duvarı ürettim! (Kalan duvarı sol tık ile yerleştir)", 4.0)
+		else:
+			queue_dialogue("Kadın: Lütfen kılıcınla ağaç kesip bana odun getir. (En az 3 odun lazım)", 4.0)
+			queue_dialogue("Burada boş bir alan var, Kabe'yi etrafıma 3x3 olacak şekilde kur.", 4.0)
+	elif woman_state == 4:
+		if player.deer_meat >= 3:
+			queue_dialogue("Kadın: Harika! 3 geyik getirdin.", 3.0)
+			queue_dialogue("Kadın: Yeni nesiller üretmek için Kabe'nin etrafında saat yönünün tersine 7 kez dönmelisin.", 5.0)
+			woman_state = 5
+			tawaf_count = 0
+			last_tawaf_angle = atan2(player.global_position.z - kabe_center.z, player.global_position.x - kabe_center.x)
+		else:
+			queue_dialogue("Kadın: 3 geyik avlamanı bekliyorum.", 3.0)
+	elif woman_state == 6:
+		var dist_to_kabe = player.global_position.distance_to(kabe_center)
+		if dist_to_kabe < 3.0:
+			queue_dialogue("Çocuklar doğdu!", 3.0)
+			woman_state = 7
+			_spawn_children()
+		else:
+			queue_dialogue("Kabe'nin içine gir!", 2.0)
+	elif woman_state == 7:
+		if children_sacrificed >= 1:
+			queue_dialogue("Kadın: Kalan 4 çocuk için 2 yeni ev (duvar) inşa etmeliyiz.", 4.0)
+			queue_dialogue("Yine odun topla ve bana getir.", 3.0)
+			total_houses_needed = 2
+			walls_placed = 0
+			woman_state = 8
+		else:
+			queue_dialogue("Kadın: Tanrıya bir çocuğu kurban etmelisin.", 3.0)
+	elif woman_state == 8:
+		if player.wood_count >= 3:
+			player.wood_count -= 3
+			player.wall_count += 1
+			queue_dialogue("Kadın: 1 Duvar ürettim! Evleri inşa et.", 3.0)
+		else:
+			queue_dialogue("Kadın: Evler için odun lazım.", 3.0)
+
+func _spawn_children():
+	for i in range(5):
+		var c = CharacterBody3D.new()
+		c.set_script(load("res://scripts/child.gd"))
+		c.position = kabe_center + Vector3(randf_range(-1,1), 0.5, randf_range(-1,1))
+		var cm = CSGSphere3D.new(); cm.radius = 0.4
+		var mat = StandardMaterial3D.new(); mat.albedo_color = Color(1, 0.8, 0.8)
+		cm.material = mat; c.add_child(cm)
+		var cc = CollisionShape3D.new(); cc.shape = SphereShape3D.new(); cc.shape.radius = 0.4
+		c.add_child(cc)
+		var body = StaticBody3D.new(); body.add_to_group("child")
+		var bcol = CollisionShape3D.new(); bcol.shape = SphereShape3D.new(); bcol.shape.radius = 0.5
+		body.add_child(bcol); c.add_child(body)
+		env_node.add_child(c)
+
+func child_sacrificed():
+	children_sacrificed += 1
+	queue_dialogue("Çocuğu Tanrı'ya kurban ettin!", 3.0)
+
+func child_placed():
+	children_placed += 1
+
+func _end_game():
+	var end_bg = ColorRect.new()
+	end_bg.color = Color(1, 1, 1, 0)
+	end_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	$CanvasLayer.add_child(end_bg)
+	
+	var label1 = Label.new(); label1.text = "TANRI MEMNUN OLDU"
+	label1.set_anchors_preset(Control.PRESET_CENTER)
+	label1.position.y -= 50
+	label1.add_theme_font_size_override("font_size", 64)
+	label1.add_theme_color_override("font_color", Color(0,0,0,1))
+	label1.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	end_bg.add_child(label1)
+	
+	var label2 = Label.new(); label2.text = "ÇAĞ ATLADIN"
+	label2.set_anchors_preset(Control.PRESET_CENTER)
+	label2.position.y += 50
+	label2.add_theme_font_size_override("font_size", 64)
+	label2.add_theme_color_override("font_color", Color(0,0,0,1))
+	label2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	end_bg.add_child(label2)
+	
+	var tw = create_tween()
+	tw.tween_property(end_bg, "color", Color(1, 1, 1, 1), 3.0)
+	tw.tween_callback(func(): get_tree().paused = true)
+
+func _build_earth():
+	player.checkpoint_pos = Vector3(500, 0, -2000)
+	player.global_position = player.checkpoint_pos
+	woman_state = 2
+	
+	# Earth environment
+	var g = CSGBox3D.new()
+	g.size = Vector3(200, 1, 200)
+	g.position = Vector3(500, -0.5, -2000)
+	g.use_collision = true
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.2, 0.4, 0.1) # Grass
+	g.material = mat
+	env_node.add_child(g)
+	
+	# Trees
+	var t_mat = StandardMaterial3D.new()
+	t_mat.albedo_color = Color(0.4, 0.2, 0) # Trunk
+	var l_mat = StandardMaterial3D.new()
+	l_mat.albedo_color = Color(0, 0.5, 0) # Leaves
+	
+	for i in range(20):
+		var tree = StaticBody3D.new()
+		tree.add_to_group("tree")
+		tree.position = Vector3(500 + randf_range(-80, 80), 0, -2000 + randf_range(-80, 80))
+		
+		var trunk = CSGCylinder3D.new()
+		trunk.radius = 0.5; trunk.height = 5.0; trunk.position.y = 2.5
+		trunk.material = t_mat; tree.add_child(trunk)
+		var leaves = CSGSphere3D.new()
+		leaves.radius = 2.5; leaves.position.y = 6.0
+		leaves.material = l_mat; tree.add_child(leaves)
+		var col = CollisionShape3D.new()
+		var cs = CylinderShape3D.new(); cs.radius = 0.5; cs.height = 5.0
+		col.shape = cs; col.position.y = 2.5; tree.add_child(col)
+		
+		# Add apple at top
+		var a = Node3D.new()
+		a.position.y = 8.5
+		var fb = CSGSphere3D.new(); fb.radius = 0.3
+		var am = StandardMaterial3D.new(); am.albedo_color = Color(0.85, 0.1, 0.1)
+		fb.material = am; a.add_child(fb)
+		var b = StaticBody3D.new(); b.add_to_group("apple")
+		var c = CollisionShape3D.new(); c.shape = SphereShape3D.new(); c.shape.radius = 0.6
+		b.add_child(c); a.add_child(b); tree.add_child(a)
+		
+		env_node.add_child(tree)
+		
+	# Move woman to Earth
+	var woman = env_node.get_node_or_null("Woman")
+	if woman:
+		woman.position = Vector3(505, 0, -2005)
+
+
+
+var walls_placed = 0
+var total_houses_needed = 0
+var kabe_center = Vector3(500, 0, -2005)
+var tawaf_angle = 0.0
+var tawaf_count = 0
+var last_tawaf_angle = 0.0
+var children_sacrificed = 0
+var children_placed = 0
+
+func place_wall_from_player(pos: Vector3):
+	var wall = CSGBox3D.new()
+	wall.size = Vector3(3, 3, 0.2)
+	wall.position = pos
+	wall.position.y = 1.5
+	# Black with gold stripe
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.1, 0.1, 0.1)
+	wall.material = mat
+	# Gold stripe (simple child box)
+	var stripe = CSGBox3D.new()
+	stripe.size = Vector3(3.05, 0.2, 0.25)
+	stripe.position.y = 0.5
+	var gmat = StandardMaterial3D.new()
+	gmat.albedo_color = Color(0.8, 0.7, 0.2)
+	stripe.material = gmat
+	wall.add_child(stripe)
+	
+	var body = StaticBody3D.new()
+	var col = CollisionShape3D.new()
+	var shape = BoxShape3D.new()
+	shape.size = wall.size
+	col.shape = shape
+	body.add_child(col)
+	wall.add_child(body)
+	env_node.add_child(wall)
+	
+	if woman_state == 2:
+		walls_placed += 1
+		if walls_placed >= 4:
+			queue_dialogue("KABE duvarları tamamlandı!", 4.0)
+			queue_dialogue("İhtiyar Dayı: Ormanda saklı bir sandık var, içinde Buz mucizesi var.", 5.0)
+			_spawn_ice_chest()
+	elif woman_state == 6: # Building regular houses
+		walls_placed += 1
+		if walls_placed >= 4:
+			total_houses_needed -= 1
+			walls_placed = 0
+			queue_dialogue("Bir ev tamamlandı!", 3.0)
+			if total_houses_needed <= 0:
+				queue_dialogue("Tüm evler tamamlandı! (Oyun Sonu)", 5.0)
+				_end_game()
+
+func _spawn_ice_chest():
+	woman_state = 3
+	var chest = CSGBox3D.new()
+	chest.size = Vector3(2, 1.5, 1.5)
+	chest.position = Vector3(500 + randf_range(-30, 30), 0.75, -2000 + randf_range(-30, 30))
+	var wood_mat = StandardMaterial3D.new()
+	wood_mat.albedo_color = Color(0.3, 0.15, 0.05)
+	chest.material = wood_mat
+	var body = StaticBody3D.new()
+	body.add_to_group("chest_ice")
+	var col = CollisionShape3D.new()
+	col.shape = BoxShape3D.new()
+	col.shape.size = chest.size
+	body.add_child(col)
+	chest.add_child(body)
+	env_node.add_child(chest)
+	
+	# Add trigger for Kabe Roof
+	var r = CSGBox3D.new()
+	r.size = Vector3(5, 5, 5)
+	r.position = kabe_center + Vector3(0, 3, 0)
+	var rmat = StandardMaterial3D.new()
+	rmat.albedo_color = Color(0,0,1,0.2); rmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	r.material = rmat
+	var rbody = StaticBody3D.new()
+	rbody.add_to_group("kabe_build_area")
+	var rcol = CollisionShape3D.new()
+	rcol.shape = BoxShape3D.new(); rcol.shape.size = r.size
+	rbody.add_child(rcol); r.add_child(rbody); env_node.add_child(r)
+
+func build_kabe_roof():
+	queue_dialogue("Buzdan tavan oluştu!", 3.0)
+	var roof = CSGBox3D.new()
+	roof.size = Vector3(3.2, 0.2, 3.2)
+	roof.position = kabe_center + Vector3(0, 3.1, 0)
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color(0.6, 0.8, 1.0, 0.8)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	roof.material = mat
+	env_node.add_child(roof)
+	
+	queue_dialogue("Kadın: Kabe çok güzel oldu! Şimdi senden geyik avlamanı istiyorum (3 adet).", 5.0)
+	queue_dialogue("İhtiyar Dayı: Ok ve yay için yeni sandığı bul.", 4.0)
+	woman_state = 4
+	_spawn_bow_chest()
+
+func _spawn_bow_chest():
+	var chest = CSGBox3D.new()
+	chest.size = Vector3(2, 1.5, 1.5)
+	chest.position = Vector3(500 + randf_range(-30, 30), 0.75, -2000 + randf_range(-30, 30))
+	var wood_mat = StandardMaterial3D.new()
+	wood_mat.albedo_color = Color(0.3, 0.15, 0.05)
+	chest.material = wood_mat
+	var body = StaticBody3D.new()
+	body.add_to_group("chest_bow")
+	var col = CollisionShape3D.new(); col.shape = BoxShape3D.new(); col.shape.size = chest.size
+	body.add_child(col); chest.add_child(body); env_node.add_child(chest)
+	
+	# Spawn 3 Deer
+	for i in range(3):
+		var d = CharacterBody3D.new()
+		d.set_script(load("res://scripts/deer.gd"))
+		d.position = Vector3(500 + randf_range(-50, 50), 1.0, -2000 + randf_range(-50, 50))
+		var dm = CSGBox3D.new(); dm.size = Vector3(1, 1.5, 2)
+		var dmat = StandardMaterial3D.new(); dmat.albedo_color = Color(0.5, 0.3, 0.1)
+		dm.material = dmat; d.add_child(dm)
+		var dc = CollisionShape3D.new(); dc.shape = BoxShape3D.new(); dc.shape.size = dm.size
+		d.add_child(dc)
+		
+		# Head (Hurtbox)
+		var head = CSGBox3D.new(); head.size = Vector3(0.5, 0.5, 0.5); head.position = Vector3(0, 1.0, 1.0)
+		head.material = dmat; d.add_child(head)
+		var hb = StaticBody3D.new(); hb.add_to_group("deer_head"); hb.position = head.position
+		var hc = CollisionShape3D.new(); hc.shape = BoxShape3D.new(); hc.shape.size = head.size
+		hb.add_child(hc); d.add_child(hb)
+		
+		env_node.add_child(d)
+
+func deer_killed(deer):
+	queue_dialogue("Geyik öldü! E ile topla.", 2.0)
+	var body = StaticBody3D.new(); body.add_to_group("dead_deer")
+	var col = CollisionShape3D.new(); col.shape = BoxShape3D.new(); col.shape.size = Vector3(2,2,2)
+	body.add_child(col); deer.add_child(body)
+
+func _process_tawaf():
+	if woman_state == 5:
+		var curr_angle = atan2(player.global_position.z - kabe_center.z, player.global_position.x - kabe_center.x)
+		var diff = curr_angle - last_tawaf_angle
+		
+		if diff > PI: diff -= 2*PI
+		if diff < -PI: diff += 2*PI
+		
+		# Counter-clockwise means diff is positive (or negative depending on Godot axis, Godot Z is forward so let's just accumulate absolute diff)
+		# Actually, CCW in X-Z top-down where +X is right, +Z is down.
+		if diff < 0: # Let's accept any circle direction or strict CCW
+			tawaf_angle += abs(diff)
+			
+		last_tawaf_angle = curr_angle
+		
+		if tawaf_angle >= 2 * PI:
+			tawaf_angle = 0.0
+			tawaf_count += 1
+			queue_dialogue("Tavaf: " + str(tawaf_count) + "/7", 2.0)
+			if tawaf_count >= 7:
+				queue_dialogue("Kadın: Görev tamamlandı! Kabe'ye gir.", 4.0)
+				woman_state = 6 # Ready to reproduce
