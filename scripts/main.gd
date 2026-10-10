@@ -36,6 +36,9 @@ var pause_menu: Control
 var damage_overlay: ColorRect
 var hp_label: Label
 
+func _enter_tree():
+	_setup_inputs()
+
 func _ready():
 	_setup_ui()
 	_build_stage_2()
